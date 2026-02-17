@@ -26,7 +26,7 @@ const ALLOWED_MIME_TYPES = [
   "image/heic",
   "image/heif",
 ];
-const MAX_FILE_SIZE = 1024 * 1024; // 1MB
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB (client compresses before upload)
 const MAX_FILES = 3;
 
 function sanitize(value: FormDataEntryValue | string | null | undefined): string {

@@ -11,7 +11,67 @@ interface PhotoUploadProps {
 
 const ACCEPTED_TYPES = ".jpg,.jpeg,.png,.webp,.heic,.heif";
 const MAX_FILES = 3;
-const MAX_FILE_SIZE_BYTES = 1024 * 1024; // 1MB
+const MAX_INPUT_SIZE_BYTES = 10 * 1024 * 1024; // 10MB input (before compression)
+const MAX_DIMENSION = 2048;
+const JPEG_QUALITY = 0.85;
+
+function compressImage(file: File): Promise<File> {
+  return new Promise((resolve) => {
+    // HEIC/HEIF can't be decoded by canvas in most browsers — pass through
+    if (file.type.includes("heic") || file.type.includes("heif")) {
+      resolve(file);
+      return;
+    }
+
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+
+      let { width, height } = img;
+
+      // Only resize if larger than max dimension
+      if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+        if (width > height) {
+          height = Math.round((height * MAX_DIMENSION) / width);
+          width = MAX_DIMENSION;
+        } else {
+          width = Math.round((width * MAX_DIMENSION) / height);
+          height = MAX_DIMENSION;
+        }
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0, width, height);
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            resolve(file); // fallback to original
+            return;
+          }
+          const compressed = new File([blob], file.name.replace(/\.\w+$/, ".jpg"), {
+            type: "image/jpeg",
+          });
+          resolve(compressed);
+        },
+        "image/jpeg",
+        JPEG_QUALITY
+      );
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(file); // fallback to original
+    };
+
+    img.src = url;
+  });
+}
 
 export default function PhotoUpload({
   idPrefix,
@@ -22,6 +82,7 @@ export default function PhotoUpload({
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
   const [error, setError] = useState("");
+  const [processing, setProcessing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const isLight = variant === "light";
 
@@ -36,9 +97,10 @@ export default function PhotoUpload({
   }, []);
 
   const handleFiles = useCallback(
-    (incoming: FileList | null) => {
+    async (incoming: FileList | null) => {
       if (!incoming) return;
       setError("");
+      setProcessing(true);
 
       const newFiles: File[] = [];
       const newPreviews: string[] = [];
@@ -49,23 +111,26 @@ export default function PhotoUpload({
           break;
         }
 
-        if (file.size > MAX_FILE_SIZE_BYTES) {
-          setError(`"${file.name}" exceeds 1MB and was not added.`);
+        if (file.size > MAX_INPUT_SIZE_BYTES) {
+          setError(`"${file.name}" exceeds 10MB and was not added.`);
           continue;
         }
 
-        newFiles.push(file);
+        const compressed = await compressImage(file);
+        newFiles.push(compressed);
 
         if (
-          file.type.startsWith("image/") &&
-          !file.type.includes("heic") &&
-          !file.type.includes("heif")
+          compressed.type.startsWith("image/") &&
+          !compressed.type.includes("heic") &&
+          !compressed.type.includes("heif")
         ) {
-          newPreviews.push(URL.createObjectURL(file));
+          newPreviews.push(URL.createObjectURL(compressed));
         } else {
           newPreviews.push("");
         }
       }
+
+      setProcessing(false);
 
       if (newFiles.length === 0) return;
 
@@ -120,7 +185,9 @@ export default function PhotoUpload({
           e.currentTarget.classList.remove("border-gold");
           if (files.length < MAX_FILES) handleFiles(e.dataTransfer.files);
         }}
-        onClick={() => files.length < MAX_FILES && inputRef.current?.click()}
+        onClick={() =>
+          !processing && files.length < MAX_FILES && inputRef.current?.click()
+        }
         className={`
           relative rounded-lg border-2 border-dashed transition-colors cursor-pointer
           ${compact ? "p-4" : "p-6"}
@@ -129,7 +196,7 @@ export default function PhotoUpload({
               ? "border-gray-300 hover:border-gold bg-gray-50/50"
               : "border-white/20 hover:border-gold bg-white/5"
           }
-          ${files.length >= MAX_FILES ? "opacity-60 cursor-not-allowed" : ""}
+          ${files.length >= MAX_FILES || processing ? "opacity-60 cursor-not-allowed" : ""}
         `}
       >
         <input
@@ -142,7 +209,20 @@ export default function PhotoUpload({
           onChange={(e) => handleFiles(e.target.files)}
         />
 
-        {files.length === 0 ? (
+        {processing ? (
+          <div className="text-center">
+            <div
+              className="w-8 h-8 mx-auto mb-2 border-2 border-gold border-t-transparent rounded-full animate-spin"
+            />
+            <p
+              className={`text-sm ${
+                isLight ? "text-gray-500" : "text-white/50"
+              }`}
+            >
+              Optimizing photos...
+            </p>
+          </div>
+        ) : files.length === 0 ? (
           <div className="text-center">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -170,7 +250,7 @@ export default function PhotoUpload({
                 isLight ? "text-gray-400" : "text-white/30"
               }`}
             >
-              JPG, PNG, or WebP &middot; Up to 1MB each
+              JPG, PNG, WebP, or HEIC &middot; Photos are auto-optimized
             </p>
           </div>
         ) : (
