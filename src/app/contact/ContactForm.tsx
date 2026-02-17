@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, FormEvent } from "react";
+import PhotoUpload from "@/components/PhotoUpload";
 
 const SERVICE_OPTIONS = [
   "Interior Painting",
@@ -23,29 +24,29 @@ export default function ContactForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [error, setError] = useState("");
+  const [photos, setPhotos] = useState<File[]>([]);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setIsSubmitting(true);
     setError("");
 
-    const formData = new FormData(e.currentTarget);
-    const payload = {
-      name: formData.get("name") as string,
-      email: formData.get("email") as string,
-      phone: formData.get("phone") as string,
-      address: formData.get("address") as string,
-      serviceInterest: formData.get("serviceInterest") as string,
-      projectDescription: formData.get("projectDescription") as string,
-      howFoundUs: formData.get("howFoundUs") as string,
-      sourcePage: "Contact",
-    };
+    const htmlFormData = new FormData(e.currentTarget);
+    const submitData = new FormData();
+    submitData.append("name", htmlFormData.get("name") as string);
+    submitData.append("email", htmlFormData.get("email") as string);
+    submitData.append("phone", htmlFormData.get("phone") as string);
+    submitData.append("address", htmlFormData.get("address") as string);
+    submitData.append("serviceInterest", htmlFormData.get("serviceInterest") as string);
+    submitData.append("projectDescription", htmlFormData.get("projectDescription") as string);
+    submitData.append("howFoundUs", htmlFormData.get("howFoundUs") as string);
+    submitData.append("sourcePage", "Contact");
+    photos.forEach((file) => submitData.append("photos", file));
 
     try {
       const res = await fetch("/api/lead", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: submitData,
       });
       if (!res.ok) throw new Error("Something went wrong. Please try again.");
       setIsSubmitted(true);
@@ -178,6 +179,8 @@ export default function ContactForm() {
           className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm text-charcoal outline-none transition-colors focus:border-gold focus:ring-1 focus:ring-gold resize-none"
         />
       </div>
+
+      <PhotoUpload idPrefix="contact" variant="light" onFilesChange={setPhotos} />
 
       {error && <p className="text-red-600 text-sm">{error}</p>}
 

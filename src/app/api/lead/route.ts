@@ -13,8 +13,24 @@ interface LeadData {
   sourcePage?: string;
 }
 
-function sanitize(value: unknown): string {
-  if (typeof value !== "string") return "";
+interface ValidatedFile {
+  filename: string;
+  content: Buffer;
+  contentType: string;
+}
+
+const ALLOWED_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+];
+const MAX_FILE_SIZE = 1024 * 1024; // 1MB
+const MAX_FILES = 3;
+
+function sanitize(value: FormDataEntryValue | string | null | undefined): string {
+  if (!value || typeof value !== "string") return "";
   return value.trim().slice(0, 2000);
 }
 
@@ -25,6 +41,29 @@ function validateEmail(email: string): boolean {
 function validatePhone(phone: string): boolean {
   const digits = phone.replace(/\D/g, "");
   return digits.length >= 7 && digits.length <= 15;
+}
+
+async function validateAndExtractFiles(
+  entries: FormDataEntryValue[]
+): Promise<ValidatedFile[]> {
+  const files: ValidatedFile[] = [];
+
+  for (const entry of entries) {
+    if (!(entry instanceof File) || entry.size === 0) continue;
+    if (files.length >= MAX_FILES) break;
+
+    if (!ALLOWED_MIME_TYPES.includes(entry.type)) continue;
+    if (entry.size > MAX_FILE_SIZE) continue;
+
+    const arrayBuffer = await entry.arrayBuffer();
+    files.push({
+      filename: entry.name,
+      content: Buffer.from(arrayBuffer),
+      contentType: entry.type,
+    });
+  }
+
+  return files;
 }
 
 async function appendToGoogleSheet(data: LeadData) {
@@ -73,7 +112,7 @@ async function appendToGoogleSheet(data: LeadData) {
   });
 }
 
-async function sendEmailNotification(data: LeadData) {
+async function sendEmailNotification(data: LeadData, files: ValidatedFile[] = []) {
   const apiKey = process.env.EMAIL_SERVICE_API_KEY;
   const fromAddress = process.env.EMAIL_FROM_ADDRESS;
   const toAddresses = process.env.EMAIL_TO_ADDRESSES || "msodia@live.com,tyler.sodia@outlook.com";
@@ -83,8 +122,6 @@ async function sendEmailNotification(data: LeadData) {
     return;
   }
 
-  // Using Nodemailer with a generic SMTP relay
-  // Configure for your provider: Gmail SMTP, SendGrid, Resend, etc.
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST || "smtp.sendgrid.net",
     port: Number(process.env.SMTP_PORT) || 587,
@@ -98,6 +135,10 @@ async function sendEmailNotification(data: LeadData) {
   const timestamp = new Date().toLocaleString("en-US", {
     timeZone: "America/Denver",
   });
+
+  const photoRow = files.length > 0
+    ? `<tr><td style="padding: 8px 0; font-weight: bold; color: #1a2744;">Photos:</td><td style="padding: 8px 0;">${files.length} photo(s) attached</td></tr>`
+    : "";
 
   const htmlBody = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -113,6 +154,7 @@ async function sendEmailNotification(data: LeadData) {
           <tr><td style="padding: 8px 0; font-weight: bold; color: #1a2744;">Service:</td><td style="padding: 8px 0;">${data.serviceInterest}</td></tr>
           ${data.projectDescription ? `<tr><td style="padding: 8px 0; font-weight: bold; color: #1a2744; vertical-align: top;">Project:</td><td style="padding: 8px 0;">${data.projectDescription}</td></tr>` : ""}
           ${data.howFoundUs ? `<tr><td style="padding: 8px 0; font-weight: bold; color: #1a2744;">Found Us:</td><td style="padding: 8px 0;">${data.howFoundUs}</td></tr>` : ""}
+          ${photoRow}
           <tr><td style="padding: 8px 0; font-weight: bold; color: #1a2744;">Source Page:</td><td style="padding: 8px 0;">${data.sourcePage || "Unknown"}</td></tr>
           <tr><td style="padding: 8px 0; font-weight: bold; color: #1a2744;">Submitted:</td><td style="padding: 8px 0;">${timestamp}</td></tr>
         </table>
@@ -128,25 +170,48 @@ async function sendEmailNotification(data: LeadData) {
     to: toAddresses,
     subject: `LEAD - Martin's Fine Painting: ${data.name} — ${data.serviceInterest}`,
     html: htmlBody,
-    text: `New Lead — Martin's Fine Painting\n\nName: ${data.name}\nEmail: ${data.email}\nPhone: ${data.phone}\n${data.address ? `Address: ${data.address}\n` : ""}Service: ${data.serviceInterest}\n${data.projectDescription ? `Project: ${data.projectDescription}\n` : ""}${data.howFoundUs ? `Found Us: ${data.howFoundUs}\n` : ""}Source: ${data.sourcePage || "Unknown"}\nSubmitted: ${timestamp}`,
+    text: `New Lead — Martin's Fine Painting\n\nName: ${data.name}\nEmail: ${data.email}\nPhone: ${data.phone}\n${data.address ? `Address: ${data.address}\n` : ""}Service: ${data.serviceInterest}\n${data.projectDescription ? `Project: ${data.projectDescription}\n` : ""}${data.howFoundUs ? `Found Us: ${data.howFoundUs}\n` : ""}${files.length > 0 ? `Photos: ${files.length} attached\n` : ""}Source: ${data.sourcePage || "Unknown"}\nSubmitted: ${timestamp}`,
+    attachments: files.map((file) => ({
+      filename: file.filename,
+      content: file.content,
+      contentType: file.contentType,
+    })),
   });
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const contentType = request.headers.get("content-type") || "";
 
-    // Validate & sanitize
-    const data: LeadData = {
-      name: sanitize(body.name),
-      email: sanitize(body.email),
-      phone: sanitize(body.phone),
-      address: sanitize(body.address),
-      serviceInterest: sanitize(body.serviceInterest),
-      projectDescription: sanitize(body.projectDescription),
-      howFoundUs: sanitize(body.howFoundUs),
-      sourcePage: sanitize(body.sourcePage),
-    };
+    let data: LeadData;
+    let files: ValidatedFile[] = [];
+
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await request.formData();
+      data = {
+        name: sanitize(formData.get("name")),
+        email: sanitize(formData.get("email")),
+        phone: sanitize(formData.get("phone")),
+        address: sanitize(formData.get("address")),
+        serviceInterest: sanitize(formData.get("serviceInterest")),
+        projectDescription: sanitize(formData.get("projectDescription")),
+        howFoundUs: sanitize(formData.get("howFoundUs")),
+        sourcePage: sanitize(formData.get("sourcePage")),
+      };
+      files = await validateAndExtractFiles(formData.getAll("photos"));
+    } else {
+      const body = await request.json();
+      data = {
+        name: sanitize(body.name),
+        email: sanitize(body.email),
+        phone: sanitize(body.phone),
+        address: sanitize(body.address),
+        serviceInterest: sanitize(body.serviceInterest),
+        projectDescription: sanitize(body.projectDescription),
+        howFoundUs: sanitize(body.howFoundUs),
+        sourcePage: sanitize(body.sourcePage),
+      };
+    }
 
     if (!data.name || !data.email || !data.phone || !data.serviceInterest) {
       return NextResponse.json(
@@ -170,9 +235,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Run Google Sheet append and email in parallel
+    // Files are only passed to email — NOT to Google Sheets
     const results = await Promise.allSettled([
       appendToGoogleSheet(data),
-      sendEmailNotification(data),
+      sendEmailNotification(data, files),
     ]);
 
     // Log any failures but still return success to the user

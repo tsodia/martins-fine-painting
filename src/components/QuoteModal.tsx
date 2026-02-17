@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, FormEvent } from "react";
+import PhotoUpload from "@/components/PhotoUpload";
 
 interface QuoteModalProps {
   isOpen: boolean;
@@ -25,6 +26,7 @@ export default function QuoteModal({ isOpen, onClose, sourcePage = "Modal" }: Qu
     serviceInterest: "",
     projectDescription: "",
   });
+  const [photos, setPhotos] = useState<File[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const modalRef = useRef<HTMLDivElement>(null);
@@ -74,15 +76,24 @@ export default function QuoteModal({ isOpen, onClose, sourcePage = "Modal" }: Qu
     e.preventDefault();
     setStatus("loading");
     setErrorMessage("");
+    const submitData = new FormData();
+    submitData.append("name", formData.name);
+    submitData.append("email", formData.email);
+    submitData.append("phone", formData.phone);
+    submitData.append("serviceInterest", formData.serviceInterest);
+    submitData.append("projectDescription", formData.projectDescription);
+    submitData.append("sourcePage", sourcePage);
+    photos.forEach((file) => submitData.append("photos", file));
+
     try {
       const res = await fetch("/api/lead", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...formData, sourcePage }),
+        body: submitData,
       });
       if (!res.ok) throw new Error("Something went wrong. Please try again.");
       setStatus("success");
       setFormData({ name: "", email: "", phone: "", serviceInterest: "", projectDescription: "" });
+      setPhotos([]);
     } catch (err) {
       setStatus("error");
       setErrorMessage(err instanceof Error ? err.message : "Something went wrong. Please try again.");
@@ -150,6 +161,7 @@ export default function QuoteModal({ isOpen, onClose, sourcePage = "Modal" }: Qu
                 <label htmlFor="modal-desc" className="mb-1 block text-sm font-medium text-gray-700">Brief Project Description</label>
                 <textarea id="modal-desc" name="projectDescription" rows={3} value={formData.projectDescription} onChange={handleChange} className="w-full resize-none rounded-lg border border-gray-300 px-4 py-2.5 text-sm text-charcoal outline-none transition-colors focus:border-gold focus:ring-1 focus:ring-gold" placeholder="Tell us about your project..." />
               </div>
+              <PhotoUpload idPrefix="modal" variant="light" compact onFilesChange={setPhotos} />
               {status === "error" && <p className="text-sm text-red-600">{errorMessage}</p>}
               <button type="submit" disabled={status === "loading"} className="w-full rounded-full bg-gold py-3 font-semibold text-deep-black transition-colors hover:bg-gold-soft disabled:cursor-not-allowed disabled:opacity-60">
                 {status === "loading" ? "Sending..." : "Request My Free Consultation"}
