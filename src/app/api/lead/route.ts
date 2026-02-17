@@ -126,7 +126,7 @@ async function sendEmailNotification(data: LeadData) {
   await transporter.sendMail({
     from: `"Martin's Fine Painting" <${fromAddress}>`,
     to: toAddresses,
-    subject: `New Lead: ${data.name} — ${data.serviceInterest}`,
+    subject: `LEAD - Martin's Fine Painting: ${data.name} — ${data.serviceInterest}`,
     html: htmlBody,
     text: `New Lead — Martin's Fine Painting\n\nName: ${data.name}\nEmail: ${data.email}\nPhone: ${data.phone}\n${data.address ? `Address: ${data.address}\n` : ""}Service: ${data.serviceInterest}\n${data.projectDescription ? `Project: ${data.projectDescription}\n` : ""}${data.howFoundUs ? `Found Us: ${data.howFoundUs}\n` : ""}Source: ${data.sourcePage || "Unknown"}\nSubmitted: ${timestamp}`,
   });
